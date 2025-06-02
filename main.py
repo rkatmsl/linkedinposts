@@ -19,14 +19,19 @@ def get_profile_name_from_url(linkedin_url):
         return match_company.group(1)
     return "UnknownProfile"
 
-def fetch_all_posts(profile_url, api_key, max_pages):
+def fetch_all_posts(profile_url, api_key, max_pages, post_type):
     """
-    Fetches all posts for a given LinkedIn profile URL, handling pagination up to max_pages.
+    Fetches all posts for a given LinkedIn profile or company URL, handling pagination up to max_pages.
     """
     all_posts_data = []
     current_pagination_token = None
     page_count = 0
-    API_URL = "https://fresh-linkedin-profile-data.p.rapidapi.com/get-profile-posts"
+    
+    # Set API URL based on post_type
+    if post_type == "Company Posts":
+        API_URL = "https://fresh-linkedin-profile-data.p.rapidapi.com/get-company-posts"
+    else:
+        API_URL = "https://fresh-linkedin-profile-data.p.rapidapi.com/get-profile-posts"
     
     _headers = {
         "x-rapidapi-key": api_key,
@@ -71,7 +76,7 @@ def fetch_all_posts(profile_url, api_key, max_pages):
                 time.sleep(60)
                 continue
 
-            stop_messages = ["profile not found", "profile is private", "could not find linkedin profile"]
+            stop_messages = ["profile not found", "profile is private", "could not find linkedin profile", "company not found"]
             if any(stop_msg in api_message.lower() for stop_msg in stop_messages):
                 st.error(f"Stopping pagination for {profile_url} due to: {api_message}")
                 break
@@ -87,7 +92,7 @@ def fetch_all_posts(profile_url, api_key, max_pages):
             if page_count > 1 or all_posts_data:
                 st.info("No more posts found on this page (or empty data array).")
             else:
-                st.warning(f"No posts found on the first page for {profile_url}. Profile might be empty or there's an issue.")
+                st.warning(f"No posts found on the first page for {profile_url}. Profile or company might be empty or there's an issue.")
             break 
 
         all_posts_data.extend(posts_on_page)
@@ -156,20 +161,12 @@ def process_posts_for_excel(raw_posts_data, queried_profile_url):
             activity_urn_str = post.get("repost_urn")
 
         record = {
-            "Queried Profile Name": queried_profile_name,
             "Post Type": post_type_display,
-            "Content Author First Name": author_first_name,
-            "Content Author Last Name": author_last_name,
+            "Content Author Name": (author_first_name or '') + ' ' + (author_last_name or ''),
             "Content Author Headline": author_headline,
-            "Content Author Public ID": author_public_id,
-            "Content Author LinkedIn URL": author_linkedin_url,
             "Content Text (Original or Shared)": post.get("text"),
             "Resharer Comment (by Queried Profile)": post.get("resharer_comment") if post.get("reshared") else None,
-            "Post URL (on Queried Profile's Feed)": post_url_val,
-            "Posted Timestamp": post.get("posted"),
             "Time Ago": post.get("time"),
-            "Activity URN (this item)": activity_urn_str,
-            "Original Content URN (if Reshared)": original_content_urn_if_reshared,
             "Engagement Likes (on this item)": post.get("num_likes"),
             "Engagement Comments (on this item)": post.get("num_comments"),
             "Engagement Reactions (on this item)": post.get("num_reactions"),
@@ -203,21 +200,22 @@ def process_posts_for_excel(raw_posts_data, queried_profile_url):
 # Sidebar inputs
 st.sidebar.header("LinkedIn Posts Fetcher")
 api_key = st.sidebar.text_input("RapidAPI Key", type="password")
-linkedin_url = st.sidebar.text_input("LinkedIn Profile URL")
+linkedin_url = st.sidebar.text_input("LinkedIn Profile or Company URL")
+post_type = st.sidebar.radio("Select Post Type", ["Profile Posts", "Company Posts"])
 max_pages = st.sidebar.number_input("Number of Pages to Fetch", min_value=1, max_value=50, value=1)
 
 # Main content
 st.title("LinkedIn Posts Fetcher")
-st.markdown("Enter your RapidAPI key, LinkedIn profile URL, and the number of pages to fetch in the sidebar(1 page gives you ~50 posts), then click the button below to fetch posts.")
+st.markdown("Enter your RapidAPI key, LinkedIn profile or company URL, select the post type, and the number of pages to fetch in the sidebar (1 page gives you ~50 posts), then click the button below to fetch posts.")
 
 if st.button("Fetch Posts"):
     if not api_key:
         st.error("Please enter a valid RapidAPI key.")
     elif not linkedin_url or not linkedin_url.startswith("https://www.linkedin.com/"):
-        st.error("Please enter a valid LinkedIn profile URL.")
+        st.error("Please enter a valid LinkedIn profile or company URL.")
     else:
-        with st.spinner("Fetching posts..."):
-            all_raw_posts = fetch_all_posts(linkedin_url, api_key, max_pages)
+        with st.spinner(f"Fetching {post_type.lower()}..."):
+            all_raw_posts = fetch_all_posts(linkedin_url, api_key, max_pages, post_type)
 
         if all_raw_posts:
             st.success(f"Fetched a total of {len(all_raw_posts)} post items.")
@@ -236,10 +234,10 @@ if st.button("Fetch Posts"):
                 st.download_button(
                     label="Download Excel File",
                     data=excel_data,
-                    file_name=f"{profile_name}_linkedin_posts.xlsx",
+                    file_name=f"{profile_name}_linkedin_{post_type.lower().replace(' ', '_')}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
             else:
                 st.error("No data was processed into the Excel format. Raw posts might have been empty or unprocessable.")
         else:
-            st.error(f"No posts were fetched for {linkedin_url}. The profile might be empty, private, or an API issue occurred.")
+            st.error(f"No {post_type.lower()} were fetched for {linkedin_url}. The profile or company might be empty, private, or an API issue occurred.")
